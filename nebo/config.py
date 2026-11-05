@@ -50,6 +50,7 @@ class MediaConfig:
 
 @dataclass
 class DisplayConfig:
+    screen: bool = True  # false — без экрана, только веб-страница (экран не найден — то же, с предупреждением)
     fb_name: str = "fb_ili9340"
     units: str = "metric"  # "metric" или "aviation"
     hide_ground: bool = True

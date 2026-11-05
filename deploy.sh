@@ -11,10 +11,15 @@ rsync -a --delete --exclude __pycache__ --exclude '*.pyc' \
 
 ssh "$HOST" '
 set -e
+# юниты и правило polkit написаны для пользователя xtreme — подставляем того, кто выкладывает
+render() { sed -e "s#/home/xtreme#$HOME#g" -e "s/\bxtreme\b/$(id -un)/g" "$1"; }
+tmp=$(mktemp -d)
+render ~/nebo/deploy/nebo.service > "$tmp/nebo.service"
+render ~/nebo/deploy/50-nebo-receiver.rules > "$tmp/50-nebo-receiver.rules"
 sudo install -d -m 755 /etc/nebo
 [ -e /etc/nebo/config.toml ] || sudo install -m 644 ~/nebo/config.example.toml /etc/nebo/config.toml
-if ! cmp -s ~/nebo/deploy/nebo.service /etc/systemd/system/nebo.service; then
-    sudo install -m 644 ~/nebo/deploy/nebo.service /etc/systemd/system/nebo.service
+if ! cmp -s "$tmp/nebo.service" /etc/systemd/system/nebo.service; then
+    sudo install -m 644 "$tmp/nebo.service" /etc/systemd/system/nebo.service
     sudo systemctl daemon-reload
 fi
 # приёмник: юнит обновляем, параметры /etc/default/readsb — только если их нет (дальше руками);
@@ -37,9 +42,10 @@ if [ -x /usr/local/bin/AIS-catcher ]; then
     fi
 fi
 # право nebo запускать readsb/ais-catcher без sudo (переключение донгла со страницы)
-if ! sudo cmp -s ~/nebo/deploy/50-nebo-receiver.rules /etc/polkit-1/rules.d/50-nebo-receiver.rules; then
-    sudo install -m 644 ~/nebo/deploy/50-nebo-receiver.rules /etc/polkit-1/rules.d/50-nebo-receiver.rules
+if ! sudo cmp -s "$tmp/50-nebo-receiver.rules" /etc/polkit-1/rules.d/50-nebo-receiver.rules; then
+    sudo install -m 644 "$tmp/50-nebo-receiver.rules" /etc/polkit-1/rules.d/50-nebo-receiver.rules
 fi
+rm -rf "$tmp"
 sudo systemctl enable --quiet nebo
 sudo systemctl restart nebo
 sleep 2

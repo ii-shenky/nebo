@@ -111,7 +111,7 @@ def state_json(app) -> dict:
         "total": app.source.last_total,  # с координатами и без
         "last_ok": last_ok,
         "error": error,
-        "screen": {"view": app.view, "hex": app.shown_hex, "follow": app.follow},
+        "screen": {"enabled": app.screen is not None, "view": app.view, "hex": app.shown_hex, "follow": app.follow},
         "media": {"logo_url": cfg.media.logo_url if cfg.media.logos else None,
                   "flag_url": cfg.media.flag_url if cfg.media.flags else None},
         "planes": [plane_json(app, p) for p in planes],

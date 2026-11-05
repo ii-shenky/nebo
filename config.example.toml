@@ -25,6 +25,7 @@ flags = true          # флаги стран вылета и прилёта (fl
 ship_photos = true    # фото судов с Wikimedia Commons по IMO/MMSI (страница /ships)
 
 [display]
+screen = true         # false — без экрана 3,2", только веб-страница (на любом компьютере)
 units = "metric"      # "metric" (м, км, км/ч) или "aviation" (ft/FL, nm, kt)
 hide_ground = true    # не показывать самолёты на земле
 idle_return = 60      # через сколько секунд без нажатий вернуться к ближайшему

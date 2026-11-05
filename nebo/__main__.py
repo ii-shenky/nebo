@@ -91,13 +91,22 @@ def main():
             routes.close()
         return
 
-    from .inputs import InputReader
-    from .screen import Framebuffer
-
     from .tracks import Tracker
 
-    screen = Framebuffer(cfg.display.fb_name)
-    InputReader(cfg.touch, screen.size, events).start()
+    screen = None
+    if cfg.display.screen:
+        try:
+            from .screen import Framebuffer  # нужен numpy — без экрана не обязателен
+            screen = Framebuffer(cfg.display.fb_name)
+        except (ImportError, RuntimeError, OSError) as e:
+            log.warning("экран не найден (%s) — работаю без него, только веб-страница; "
+                        "чтобы не искать экран: [display] screen = false", e)
+    if screen:
+        from .inputs import InputReader
+        InputReader(cfg.touch, screen.size, events).start()
+    elif not cfg.web.enabled:
+        log.error("ни экрана, ни веб-страницы ([web] enabled = false) — показывать нечего")
+        sys.exit(1)
     tracks = Tracker(state_dir)
     receiver = None
     if cfg.web.enabled and cfg.web.receiver_switch and cfg.source.type == "readsb":
@@ -117,8 +126,11 @@ def main():
         from . import web
         try:
             web.start(app, cfg.web.bind, cfg.web.port)
-        except OSError as e:  # порт занят — табло важнее страницы
-            log.error("веб-страница не запущена: %s", e)
+        except OSError as e:
+            if not screen:  # без экрана показывать данные больше негде
+                log.error("веб-страница не запущена: %s — без экрана показывать нечего", e)
+                sys.exit(1)
+            log.error("веб-страница не запущена: %s", e)  # порт занят — табло важнее страницы
 
     def on_term(signum, frame):
         raise SystemExit(0)
@@ -133,8 +145,9 @@ def main():
         if routes:
             routes.close()
         tracks.close()
-        screen.show(app.renderer.splash("остановлено"))
-        screen.close()
+        if screen:
+            screen.show(app.renderer.splash("остановлено"))
+            screen.close()
 
 
 if __name__ == "__main__":

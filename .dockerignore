@@ -1,0 +1,9 @@
+.git
+ai
+tools
+deploy
+CLAUDE.local.md
+.scrub
+**/__pycache__
+# AIP Кипра распространять нельзя — в образ не кладём
+nebo/data/aip_lccc.json

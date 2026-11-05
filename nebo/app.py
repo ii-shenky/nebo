@@ -52,7 +52,7 @@ class App:
         self.screen = screen
         self.info = AircraftInfo()
         self.sil = Silhouettes()
-        self.renderer = Renderer(screen.size, self.sil)
+        self.renderer = Renderer(screen.size, self.sil) if screen else None  # без экрана — только веб-страница
         self.source = source
         self.routes = routes
         self.logos, self.flags, self.photos = logos, flags, photos
@@ -295,7 +295,8 @@ class App:
         return self.renderer.render(self._state(planes, index))
 
     def run(self):
-        self.screen.show(self.renderer.splash("загрузка…"))
+        if self.screen:
+            self.screen.show(self.renderer.splash("загрузка…"))
         stop = threading.Event()
         threading.Thread(target=self._fetch_loop, args=(stop,), name="fetch", daemon=True).start()
         try:
@@ -304,6 +305,8 @@ class App:
                     event = self.events.get(timeout=1.0)
                 except queue.Empty:
                     event = None
+                if not self.screen:
+                    continue  # без экрана рисовать нечего: данные обновляет поток fetch, события просто разбираем
                 if event:
                     self.handle(event, self._planes())
                 self._idle()

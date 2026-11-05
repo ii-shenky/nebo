@@ -35,7 +35,7 @@
       <span><i style="background:var(--accent)"></i>в воздухе</span>
       <span><i style="background:var(--far)"></i>на земле</span>
       <span><i style="background:var(--sel)"></i>выбран</span>
-      <span><i style="border:2px solid var(--accent);border-radius:50%"></i>сейчас на экране</span>
+      <span id="lg-screen"><i style="border:2px solid var(--accent);border-radius:50%"></i>сейчас на экране</span>
       <span id="lg-nav" hidden><i style="background:var(--nav)"></i>маяки, полосы; в районе Никосии — точки, трассы и граница
         <span id="lg-airac"></span></span>
       <span id="lg-outline" hidden><i style="background:color-mix(in srgb, var(--ok) 25%, transparent);border:1px solid var(--ok)"></i>дальность приёма за сутки</span>
@@ -47,7 +47,7 @@
   </aside>
 
   <section class="panel" id="table-panel">
-    <h2>Все борта, ближние сверху <label class="muted" style="font-weight:400;cursor:pointer"><input type="checkbox" id="follow" checked> показывать тот, что на табло</label></h2>
+    <h2>Все борта, ближние сверху <label class="muted" style="font-weight:400;cursor:pointer"><input type="checkbox" id="follow" checked> <span id="follow-txt">показывать тот, что на табло</span></label></h2>
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -400,7 +400,7 @@ function renderCard() {
   const onScreen = p.hex === state.screen.hex;
   const badges = [
     p.emergency ? `<span class="badge warn">${esc(p.emergency)}</span>` : '',
-    onScreen ? '<span class="badge">на экране</span>' : p.on_board ? '' : `<span class="badge far">${p.ground ? 'на земле, ' : ''}на табло не показан</span>`,
+    onScreen ? '<span class="badge">на экране</span>' : p.on_board || !state.screen.enabled ? '' : `<span class="badge far">${p.ground ? 'на земле, ' : ''}на табло не показан</span>`,
   ].join('');
   let route = '<div class="route"><div class="note">маршрут неизвестен</div></div>';
   if (r) {
@@ -503,6 +503,9 @@ function shapeInner(name) {
 // ---------- шапка ----------
 let lastMsgs = null;
 function renderHeader() {
+  // без экрана 3,2" (только веб-страница): нечего показывать «на табло», галочка — следить за ближайшим
+  $('lg-screen').hidden = !state.screen.enabled;
+  $('follow-txt').textContent = state.screen.enabled ? 'показывать тот, что на табло' : 'следить за ближайшим';
   $('s-all').textContent = state.planes.length;
   $('s-nopos').textContent = Math.max(0, state.total - state.planes.length);
   const far = state.planes.reduce((a, p) => Math.max(a, p.dist_km), 0);
@@ -570,7 +573,7 @@ async function tick() {
     state = await r.json();
     units = state.units;
     if (follow) {
-      const want = state.screen.hex || (state.planes[0] && state.planes[0].hex) || null;
+      const want = state.screen.hex || (state.planes[0] && state.planes[0].hex) || null;  // без экрана — ближайший
       if (want !== selected) { select(want); return; }
     }
     render();

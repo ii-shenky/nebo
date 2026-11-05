@@ -23,6 +23,7 @@ PROJECTS = Path.home() / ".claude" / "projects"
 
 BUILTIN_SCRUB = [
     (r"\beyJ[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]+)*", "<токен>"),
+    (r"\b\d+\+[A-Za-z0-9-]+@users\.noreply\.github\.com", "<id>+<аккаунт>@users.noreply.github.com"),
     (r"[A-Za-z0-9._%+-]+@(?!anthropic\.com|example\.com|users\.noreply\.github\.com)[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "<почта>"),
     (r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b", "<mac>"),
     (r"\b(?:[0-9a-fA-F]{1,4}:){4,7}[0-9a-fA-F]{1,4}\b", "<ipv6>"),
