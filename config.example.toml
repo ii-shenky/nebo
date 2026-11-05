@@ -1,0 +1,45 @@
+# Конфиг nebo. На малинке лежит в /etc/nebo/config.toml.
+# Все параметры необязательные: если строки нет, берётся значение по умолчанию.
+
+[location]
+lat = 34.68           # широта дома
+lon = 33.04           # долгота дома
+radius_km = 80        # радиус запроса к adsb.lol; со своим приёмником табло показывает всё принятое
+
+[source]
+type = "adsblol"      # "adsblol" — интернет; "readsb" — свой приёмник
+interval = 60         # как часто обновлять, секунд (adsb.lol банит за частые запросы; для своего приёмника — 2)
+# для своего приёмника: путь к файлу или http-адрес aircraft.json
+# path = "/run/readsb/aircraft.json"
+
+[routes]
+enabled = true        # искать маршрут «откуда → куда» на adsbdb.com
+
+[media]
+# Фото бортов с planespotters.net. Их условия требуют контакт (email или URL)
+# в запросах; без него фото не загружаются.
+# photo_contact = "you@example.com"
+photos = true
+logos = true          # логотипы авиакомпаний (github.com/Jxck-S/airline-logos)
+flags = true          # флаги стран вылета и прилёта (flagcdn.com)
+ship_photos = true    # фото судов с Wikimedia Commons по IMO/MMSI (страница /ships)
+
+[display]
+units = "metric"      # "metric" (м, км, км/ч) или "aviation" (ft/FL, nm, kt)
+hide_ground = true    # не показывать самолёты на земле
+idle_return = 60      # через сколько секунд без нажатий вернуться к ближайшему
+
+[touch]
+# калибровка: tools/touch_calibrate.py
+x_min = 120
+x_max = 3746
+y_min = 253
+y_max = 4043
+
+[web]
+enabled = true        # веб-страница со всем, что принято: http://<малинка>:8080/
+bind = "0.0.0.0"      # "127.0.0.1" — только с самой малинки
+port = 8080
+ais_url = "http://127.0.0.1:8100"   # AIS-catcher (суда) — страница /ships, когда донгл слушает суда
+receiver_switch = true              # страница судов переключает донгл на суда, страница самолётов — обратно
+ships_idle_return = 120             # страницу судов закрыли — через столько секунд снова самолёты

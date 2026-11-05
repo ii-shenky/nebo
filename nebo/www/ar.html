@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>nebo · AR</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-50 -50 100 100'%3E%3Cpath d='M0 -46L8 -14L44 8L44 16L8 6L6 32L18 42L18 46L0 40L-18 46L-18 42L-6 32L-8 6L-44 16L-44 8L-8 -14Z' fill='%23e8a33d'/%3E%3C/svg%3E">
+<style>
+  /* AR-экран всегда тёмный: поверх видео с камеры */
+  :root { --accent: #f0a83a; --sel: #5ea2f2; --ink: #fff; --ink-2: rgba(255, 255, 255, .75); --ink-3: rgba(255, 255, 255, .5);
+    --bg: rgba(10, 12, 16, .62); --line: rgba(255, 255, 255, .22); --panel-h: 0px; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #000; color: var(--ink); overflow: hidden; touch-action: none;
+    font: 14px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  video, canvas, #labels { position: fixed; inset: 0; width: 100%; height: 100%; }
+  video { object-fit: cover; }
+  #labels { pointer-events: none; }
+  /* самолёт в кадре: кружок вокруг места, где он должен быть, и подпись справа */
+  .ac { position: absolute; left: 0; top: 0; pointer-events: auto; will-change: transform; white-space: nowrap; }
+  .ac .ring { position: absolute; border-radius: 50%; border: 2px solid var(--accent); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35), inset 0 0 0 1px rgba(0, 0, 0, .35); }
+  .ac .tag { position: absolute; top: -13px; padding: 3px 7px 4px; border-radius: 6px; background: var(--bg);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); border-left: 3px solid var(--accent); }
+  .ac b { display: block; font-size: 15px; letter-spacing: .02em; }
+  .ac span { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .ac.far { opacity: .7; }
+  .ac.far b { font-size: 13px; }
+  .ac.aim .ring { border-color: var(--sel); border-width: 3px; }
+  .ac.aim .tag { border-left-color: var(--sel); }
+  /* стрелки к самолётам вне кадра */
+  .edge { position: absolute; left: 0; top: 0; pointer-events: auto; will-change: transform; display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px 4px 4px; border-radius: 99px; background: var(--bg); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .edge .arr { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; }
+  .edge .arr svg { width: 12px; height: 12px; }
+  .edge.aim .arr { background: var(--sel); }
+  .edge small { color: var(--ink-2); font-weight: 400; }
+  header { position: fixed; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 8px;
+    padding: calc(env(safe-area-inset-top) + 8px) 12px 8px; background: linear-gradient(rgba(0, 0, 0, .55), transparent); }
+  header a, header button { color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 99px;
+    padding: 6px 12px; font: inherit; font-size: 13px; text-decoration: none; }
+  header button.on { background: var(--sel); border-color: var(--sel); }
+  #status { flex: 1; min-width: 0; font-size: 12px; color: var(--ink-2); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #status .bad { color: #ff8a70; }
+  #cross { position: fixed; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; pointer-events: none; display: none; }
+  #cross::before, #cross::after { content: ""; position: absolute; background: var(--sel); }
+  #cross::before { left: 21px; top: 0; width: 2px; height: 44px; }
+  #cross::after { top: 21px; left: 0; height: 2px; width: 44px; }
+  body.calib #cross { display: block; }
+  #hint { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 56px); padding: 10px 12px; border-radius: 10px;
+    background: var(--bg); font-size: 13px; display: none; }
+  body.calib #hint { display: block; }
+  /* панель внизу: самолёт в прицеле (или ближайший с подсказкой, куда довернуть) */
+  #panel { position: fixed; left: 8px; right: 8px; bottom: calc(env(safe-area-inset-bottom) + 8px); padding: 10px 14px 12px; border-radius: 14px;
+    background: rgba(16, 19, 24, .86); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--line); display: none; }
+  #panel.show { display: block; }
+  #panel .top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding-right: 26px; }
+  #panel h3 { margin: 0; font-size: 21px; color: var(--accent); }
+  #panel .mode { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 99px; background: var(--sel); color: #fff; }
+  #panel .mode.near { background: rgba(255, 255, 255, .16); }
+  #panel .turn { margin-left: auto; font-size: 15px; font-weight: 700; color: var(--sel); white-space: nowrap; }
+  #panel .rt { font-size: 16px; font-weight: 700; margin-top: 2px; }
+  #panel .rt span { font-weight: 400; color: var(--ink-2); font-size: 13px; }
+  #panel .sub { color: var(--ink-2); font-size: 13px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #panel .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 8px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  #panel .grid div { font-size: 14px; font-weight: 600; white-space: nowrap; }
+  #panel .grid small { display: block; color: var(--ink-3); font-size: 11px; font-weight: 400; }
+  #panel .links { display: flex; gap: 16px; margin-top: 8px; font-size: 13px; }
+  #panel .links a { color: var(--sel); }
+  #panel .close { position: absolute; right: 6px; top: 4px; background: none; border: 0; color: var(--ink-2); font-size: 22px; padding: 4px 8px; }
+  #start { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: #0f1216; text-align: center; }
+  #start .box { max-width: 420px; }
+  #start h1 { font-size: 22px; margin: 0 0 8px; }
+  #start p { color: var(--ink-2); margin: 8px 0; }
+  #start button { margin-top: 14px; padding: 12px 22px; border-radius: 99px; border: 0; background: var(--accent); color: #1a1205; font: 600 16px system-ui; }
+  #start .err { color: #ff8a70; }
+</style>
+</head>
+<body>
+<video id="video" playsinline muted autoplay></video>
+<canvas id="sky"></canvas>
+<div id="labels"></div>
+<div id="cross" aria-hidden="true"></div>
+<header>
+  <a href="./">← карта</a>
+  <button id="calib" type="button">Калибровка</button>
+  <span id="status">—</span>
+</header>
+<div id="hint">Наведи перекрестие на самолёт, который видишь в небе, и коснись его подписи. Масштаб — щипок двумя пальцами.</div>
+<div id="panel" aria-live="polite"></div>
+
+<div id="start">
+  <div class="box">
+    <h1>Самолёты в небе</h1>
+    <p>Наведи телефон на небо: кружки покажут, где какой самолёт, радар в углу и стрелки — куда повернуться.</p>
+    <p>Нужны камера, компас и местоположение. Компас телефона ошибается на 5–15°: если кружки не на самолётах, нажми «Калибровка».</p>
+    <button id="go" type="button">Начать</button>
+    <p class="err" id="start-err"></p>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const nf = (v, d = 0) => v == null || Number.isNaN(v) ? '–' : v.toLocaleString('ru-RU', { maximumFractionDigits: d, minimumFractionDigits: d });
+const RAD = Math.PI / 180, R_EARTH = 6371;
+const DECLINATION = 5.5;  // магнитное склонение на Кипре, градусов к востоку (компасы телефонов — магнитные)
+
+// ---------- настройки, запоминаются в браузере ----------
+const saved = (() => { try { return JSON.parse(localStorage.getItem('nebo.ar') || '{}'); } catch (e) { return {}; } })();
+let headingCal = saved.headingCal || 0;  // поправка компаса после калибровки, градусов
+let fovLong = saved.fovLong || 63;       // угол обзора по длинной стороне экрана, градусов
+const save = () => { try { localStorage.setItem('nebo.ar', JSON.stringify({ headingCal, fovLong })); } catch (e) {} };
+
+// ---------- кватернионы: ориентация телефона ----------
+// W3C deviceorientation: углы Z-X'-Y'' (alpha, beta, gamma); система Земли: x — восток, y — север, z — вверх.
+const qmul = (a, b) => [
+  a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+  a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+  a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+  a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+];
+function qEuler(alpha, beta, gamma) {
+  const h = d => d * RAD / 2;
+  const qz = [Math.cos(h(alpha)), 0, 0, Math.sin(h(alpha))];
+  const qx = [Math.cos(h(beta)), Math.sin(h(beta)), 0, 0];
+  const qy = [Math.cos(h(gamma)), 0, Math.sin(h(gamma)), 0];
+  return qmul(qmul(qz, qx), qy);
+}
+function qrot(q, v) {  // повернуть вектор кватернионом q (из системы телефона в земную)
+  const p = qmul(qmul(q, [0, v[0], v[1], v[2]]), [q[0], -q[1], -q[2], -q[3]]);
+  return [p[1], p[2], p[3]];
+}
+const qinv = q => [q[0], -q[1], -q[2], -q[3]];
+function qslerpish(a, b, t) {  // сглаживание: нормированная линейная интерполяция по короткому пути
+  if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) b = b.map(x => -x);
+  const r = a.map((x, i) => x + (b[i] - x) * t), n = Math.hypot(...r);
+  return r.map(x => x / n);
+}
+
+let orient = null, rawQ = null, source = '';
+let iosOffset = null;  // iPhone: alpha относительная, приводим её к северу по webkitCompassHeading
+function onOrientation(e) {
+  if (e.alpha == null) return;
+  let alpha;
+  if (e.type === 'deviceorientationabsolute' || e.absolute) { alpha = e.alpha; source = 'компас'; }
+  else if (e.webkitCompassHeading != null) {
+    const c = (360 - e.webkitCompassHeading - e.alpha + 720) % 360;
+    if (iosOffset == null) iosOffset = c;
+    else { const d = ((c - iosOffset + 540) % 360) - 180; iosOffset = (iosOffset + d * 0.05 + 360) % 360; }
+    alpha = e.alpha + iosOffset; source = 'компас iPhone';
+  } else { alpha = e.alpha; source = 'без компаса'; }
+  // склонение и калибровка: азимут по часовой = 360 − alpha, поэтому вычитаем
+  rawQ = qEuler(alpha - DECLINATION - headingCal, e.beta, e.gamma);
+}
+
+// ---------- камера, датчики, GPS ----------
+let me = null, gpsAcc = null;
+async function start() {
+  $('start-err').textContent = '';
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const r = await DeviceOrientationEvent.requestPermission();  // iPhone спрашивает только по нажатию кнопки
+      if (r !== 'granted') throw new Error('нет доступа к датчикам ориентации');
+    }
+    if ('ondeviceorientationabsolute' in window) window.addEventListener('deviceorientationabsolute', onOrientation);
+    else window.addEventListener('deviceorientation', onOrientation);
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    $('video').srcObject = stream;
+  } catch (e) {
+    $('start-err').textContent = window.isSecureContext
+      ? `Не получилось: ${e.message || e}. Разреши камеру и датчики в настройках браузера.`
+      : 'Камера и компас работают только по HTTPS — открой эту страницу по https:// (например, через Cloudflare Tunnel)';
+    return;
+  }
+  if (navigator.geolocation) navigator.geolocation.watchPosition(
+    p => { me = { lat: p.coords.latitude, lon: p.coords.longitude, alt: p.coords.altitude ?? 20 }; gpsAcc = p.coords.accuracy; },
+    () => { gpsAcc = -1; }, { enableHighAccuracy: true, maximumAge: 10000 });
+  // не гасить экран; не ждём ответа — если браузер промолчит, AR всё равно стартует
+  if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {});
+  $('start').remove();
+  poll(); setInterval(poll, 2000);
+  requestAnimationFrame(frame);
+}
+$('go').addEventListener('click', start);
+
+// ---------- самолёты ----------
+let state = null, fetchedAt = 0;
+async function poll() {
+  try {
+    const r = await fetch(`api/state${document.visibilityState === 'visible' ? '?view=1' : ''}`, { cache: 'no-store' });
+    if (!r.ok) return;
+    state = await r.json(); fetchedAt = performance.now();
+  } catch (e) {}
+}
+
+// где самолёт сейчас: точка от приёмника + сдвиг по курсу со скоростью (данные приходят раз в 2 с)
+function now(p) {
+  const age = (p.seen_pos || 0) + (performance.now() - fetchedAt) / 1000;
+  if (!p.gs_kt || p.track == null || age > 60) return [p.lat, p.lon];
+  const km = p.gs_kt * 1.852 * age / 3600, t = p.track * RAD;
+  return [p.lat + km * Math.cos(t) / 111.2, p.lon + km * Math.sin(t) / (111.2 * Math.cos(p.lat * RAD))];
+}
+
+// направление с наблюдателя: восток, север, вверх (единичный вектор), расстояние, угол над горизонтом
+function sight(obs, lat, lon, altFt) {
+  const dLat = (lat - obs.lat) * RAD, dLon = (lon - obs.lon) * RAD;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(obs.lat * RAD) * Math.cos(lat * RAD) * Math.sin(dLon / 2) ** 2;
+  const d = 2 * R_EARTH * Math.asin(Math.sqrt(a));
+  const y = Math.sin(dLon) * Math.cos(lat * RAD);
+  const x = Math.cos(obs.lat * RAD) * Math.sin(lat * RAD) - Math.sin(obs.lat * RAD) * Math.cos(lat * RAD) * Math.cos(dLon);
+  const az = Math.atan2(y, x);
+  const h = ((altFt ?? 0) * 0.3048 - obs.alt) / 1000;
+  const el = Math.atan2(h - d * d / (2 * R_EARTH), Math.max(d, 0.01));  // с поправкой на кривизну Земли
+  return { v: [Math.cos(el) * Math.sin(az), Math.cos(el) * Math.cos(az), Math.sin(el)], d, el: el / RAD, az: (az / RAD + 360) % 360 };
+}
+
+// ---------- проекция на экран ----------
+function screenAngle() {
+  const a = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+  return ((a % 360) + 360) % 360;
+}
+function project(q, v, W, H) {
+  const d = qrot(qinv(q), v);  // вектор в системе телефона; задняя камера смотрит вдоль −z
+  const ahead = -d[2];
+  let tx = d[0] / Math.max(ahead, 1e-6), ty = d[1] / Math.max(ahead, 1e-6);
+  const a = screenAngle() * RAD;  // экран повёрнут — поворачиваем и картинку
+  const sx = tx * Math.cos(a) - ty * Math.sin(a), sy = tx * Math.sin(a) + ty * Math.cos(a);
+  const f = Math.max(W, H) / 2 / Math.tan(fovLong / 2 * RAD);
+  return { x: W / 2 + sx * f, y: H / 2 - sy * f, ahead, sx, sy };
+}
+
+// ---------- кадр ----------
+const sky = $('sky'), ctx = sky.getContext('2d');
+const nodes = new Map();
+let selected = null;       // закреплённый тапом самолёт
+let target = null;         // кто сейчас в панели: { p, s, pr, inView }
+let camera = null;         // куда смотрит камера: азимут, угол над горизонтом, угол обзора по ширине
+
+function frame() {
+  requestAnimationFrame(frame);
+  const W = innerWidth, H = innerHeight, dpr = devicePixelRatio || 1;
+  if (sky.width !== Math.round(W * dpr) || sky.height !== Math.round(H * dpr)) { sky.width = Math.round(W * dpr); sky.height = Math.round(H * dpr); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (rawQ) orient = orient ? qslerpish(orient, rawQ, 0.25) : rawQ;
+  const obs = me || (state && { lat: state.home.lat, lon: state.home.lon, alt: 20 });
+  status();
+  if (!orient || !obs) return;
+  const fwd = qrot(orient, [0, 0, -1]);
+  const fpx = Math.max(W, H) / 2 / Math.tan(fovLong / 2 * RAD);
+  camera = { az: (Math.atan2(fwd[0], fwd[1]) / RAD + 360) % 360, el: Math.asin(Math.max(-1, Math.min(1, fwd[2]))) / RAD,
+             hfov: 2 * Math.atan(W / 2 / fpx) / RAD };
+  drawHorizon(W, H);
+
+  // все самолёты: где они относительно наблюдателя и экрана
+  const panelTop = H - ($('panel').classList.contains('show') ? $('panel').offsetHeight + 16 : 0);
+  const items = (state ? state.planes : []).map(p => {
+    const [lat, lon] = now(p);
+    const s = sight(obs, lat, lon, p.ground ? 0 : p.alt_ft);
+    const pr = project(orient, s.v, W, H);
+    const inView = pr.ahead > 0.05 && pr.x > 0 && pr.x < W && pr.y > 50 && pr.y < panelTop;
+    return { p, s, pr, inView, off: Math.hypot(pr.x - W / 2, pr.y - H / 2) };
+  });
+
+  // в панели: закреплённый тапом; иначе — ближайший к центру кадра; если в кадре пусто — ближайший вообще
+  const inView = items.filter(it => it.inView);
+  target = (selected && items.find(it => it.p.hex === selected))
+        || inView.sort((a, b) => a.off - b.off)[0]
+        || items.slice().sort((a, b) => a.s.d - b.s.d)[0] || null;
+
+  const seen = new Set();
+  for (const it of items) {
+    const { p, s, pr } = it;
+    let n = nodes.get(p.hex);
+    if (!n) {
+      n = document.createElement('div');
+      n.addEventListener('click', ev => { ev.stopPropagation(); tapPlane(p.hex); });
+      $('labels').appendChild(n); nodes.set(p.hex, n);
+    }
+    seen.add(p.hex);
+    n._sight = s;
+    if (!it.inView) { n.style.display = 'none'; continue; }
+    const size = s.d < 15 ? 52 : s.d < 40 ? 42 : s.d < 100 ? 34 : 28;  // ближе — крупнее кружок
+    const html = `<i class="ring" style="left:${-size / 2}px;top:${-size / 2}px;width:${size}px;height:${size}px"></i>
+      <div class="tag" style="left:${size / 2 + 6}px"><b>${esc(p.callsign || p.reg || p.hex)}</b><span>${alt(p)} · ${dist(s.d)}</span></div>`;
+    if (n._html !== html) { n.innerHTML = html; n._html = html; }
+    n.className = 'ac' + (s.d > 100 ? ' far' : '') + (target && target.p.hex === p.hex ? ' aim' : '');
+    n.style.transform = `translate3d(${pr.x.toFixed(1)}px, ${pr.y.toFixed(1)}px, 0)`;
+    n.style.display = '';
+  }
+  for (const [hex, n] of nodes) if (!seen.has(hex)) { n.remove(); nodes.delete(hex); }
+
+  drawEdges(items.filter(it => !it.inView), W, H, panelTop);
+  drawRadar(items, W);
+  renderPanel();
+}
+
+const alt = p => p.ground ? 'на земле' : p.alt_ft == null ? '–' : `${nf(Math.round(p.alt_ft * 0.3048 / 10) * 10)} м`;
+const dist = d => `${nf(d, d < 10 ? 1 : 0)} км`;
+const norm180 = a => ((a % 360) + 540) % 360 - 180;
+
+// куда довернуть телефон, чтобы самолёт оказался в центре кадра
+function turnHint(s) {
+  const dAz = norm180(s.az - camera.az), dEl = s.el - camera.el;
+  const parts = [];
+  if (Math.abs(dAz) >= 3) parts.push(`${dAz < 0 ? '←' : '→'} ${nf(Math.abs(dAz))}°`);
+  if (Math.abs(dEl) >= 3) parts.push(`${dEl > 0 ? '↑ выше' : '↓ ниже'} ${nf(Math.abs(dEl))}°`);
+  return parts.join(', ');
+}
+
+// горизонт и стороны света: точки на высоте 0° по кругу
+function drawHorizon(W, H) {
+  ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.font = '600 13px system-ui'; ctx.textAlign = 'center';
+  let prev = false;
+  ctx.beginPath();
+  for (let az = 0; az <= 360; az += 3) {
+    const pr = project(orient, [Math.sin(az * RAD), Math.cos(az * RAD), 0], W, H);
+    const ok = pr.ahead > 0.05 && Math.abs(pr.sx) < 8 && Math.abs(pr.sy) < 8;
+    if (ok && prev) ctx.lineTo(pr.x, pr.y); else if (ok) ctx.moveTo(pr.x, pr.y);
+    prev = ok;
+    if (ok && az % 45 === 0 && az < 360) ctx.fillText(['С', 'СВ', 'В', 'ЮВ', 'Ю', 'ЮЗ', 'З', 'СЗ'][az / 45], pr.x, pr.y - 8);
+  }
+  ctx.stroke();
+}
+
+// стрелки по краю к самолётам вне кадра: ближайшие четыре и тот, что в панели
+const edgeNodes = [];
+const ARROW = '<svg viewBox="-6 -6 12 12" aria-hidden="true"><path d="M-5 -1.4L1 -1.4L1 -4.6L5.6 0L1 4.6L1 1.4L-5 1.4Z" fill="#14161b"/></svg>';
+function drawEdges(list, W, H, panelTop) {
+  list.sort((a, b) => a.s.d - b.s.d);
+  const top = list.slice(0, 4);
+  if (target && !target.inView && !top.includes(target)) top.push(target);
+  while (edgeNodes.length < top.length) {
+    const e = document.createElement('div'); e.className = 'edge';
+    e.addEventListener('click', ev => { ev.stopPropagation(); tapPlane(e._hex); });
+    $('labels').appendChild(e); edgeNodes.push(e);
+  }
+  const mTop = 64, mBottom = H - panelTop + 12, m = 12;
+  const cx = W / 2, cy = (mTop + H - mBottom) / 2;
+  const placed = [];
+  edgeNodes.forEach((e, i) => {
+    const it = top[i];
+    if (!it) { e.style.display = 'none'; return; }
+    // направление на самолёт в плоскости экрана (за спиной знак тоже верный: делим на |ahead|)
+    const ang = Math.atan2(-it.pr.sy, it.pr.sx);
+    const html = `<span class="arr" style="transform:rotate(${(ang / RAD).toFixed(0)}deg)">${ARROW}</span>${esc(it.p.callsign || it.p.hex)} <small>${dist(it.s.d)}</small>`;
+    if (e._html !== html) { e.innerHTML = html; e._html = html; }
+    e._hex = it.p.hex;
+    e.className = 'edge' + (target && target.p.hex === it.p.hex ? ' aim' : '');
+    e.style.display = '';
+    const w = e.offsetWidth, h = 30;
+    const hw = W / 2 - m - w / 2, hh = (H - mBottom - mTop) / 2 - h / 2;
+    const k = Math.min(hw / Math.abs(Math.cos(ang) || 1e-6), hh / Math.abs(Math.sin(ang) || 1e-6));
+    let x = cx + Math.cos(ang) * k - w / 2, y = cy + Math.sin(ang) * k - h / 2;
+    x = Math.max(m, Math.min(W - m - w, x));
+    // не налезать на уже поставленные плашки: сдвигаем вниз (у нижнего края — вверх)
+    for (let tries = 0; tries < 8 && placed.some(b => Math.abs(b.y - y) < h + 4 && b.x < x + w && x < b.x + b.w); tries++)
+      y = y + h + 4 > H - mBottom - h ? y - (h + 4) : y + h + 4;
+    placed.push({ x, y, w });
+    e.style.transform = `translate3d(${x.toFixed(0)}px, ${y.toFixed(0)}px, 0)`;
+  });
+}
+
+// радар в правом верхнем углу: вид сверху, направление камеры — вверх
+const RADAR_RANGES = [10, 25, 50, 100, 200, 400];
+function drawRadar(items, W) {
+  const r = 62, cx = W - r - 12, cy = (parseFloat(getComputedStyle(document.querySelector('header')).height) || 50) + r + 6;
+  const ds = items.map(it => it.s.d).sort((a, b) => a - b);
+  const want = Math.max(ds[Math.max(0, Math.ceil(ds.length * 0.8) - 1)] || 25, target ? target.s.d : 0) * 1.05;
+  const range = RADAR_RANGES.find(x => x >= want) || RADAR_RANGES[RADAR_RANGES.length - 1];
+  ctx.save();
+  ctx.fillStyle = 'rgba(10,12,16,.62)'; ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, r / 2, 0, 2 * Math.PI); ctx.stroke();
+  // сектор обзора камеры
+  const half = camera.hfov / 2 * RAD;
+  ctx.fillStyle = 'rgba(94,162,242,.22)';
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, -Math.PI / 2 - half, -Math.PI / 2 + half); ctx.closePath(); ctx.fill();
+  // север на ободе
+  const nA = (-camera.az - 90) * RAD;
+  ctx.fillStyle = '#ff8a70'; ctx.font = '700 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('С', cx + Math.cos(nA) * (r - 8), cy + Math.sin(nA) * (r - 8));
+  // самолёты
+  for (const it of items) {
+    if (it.s.d > range) continue;
+    const a = (it.s.az - camera.az - 90) * RAD, rr = it.s.d / range * (r - 4);
+    const isT = target && target.p.hex === it.p.hex;
+    ctx.fillStyle = isT ? '#5ea2f2' : it.inView ? '#f0a83a' : 'rgba(255,255,255,.8)';
+    ctx.beginPath(); ctx.arc(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, isT ? 4 : 2.6, 0, 2 * Math.PI); ctx.fill();
+  }
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy, 2, 0, 2 * Math.PI); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.font = '10px system-ui'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText(`${range} км`, cx, cy + r + 12);
+  ctx.restore();
+}
+
+function status() {
+  const parts = [];
+  parts.push(me ? `GPS ±${nf(gpsAcc)} м` : gpsAcc === -1 ? '<span class="bad">без GPS — точка дома</span>' : 'жду GPS…');
+  parts.push(rawQ ? source : '<span class="bad">нет датчиков</span>');
+  if (state && state.receiver && state.receiver.mode === 'ships') parts.push('<span class="bad">антенна у судов</span>');
+  const html = parts.join(' · ');
+  if ($('status')._html !== html) { $('status').innerHTML = html; $('status')._html = html; }
+}
+
+// ---------- панель внизу ----------
+let panelAt = 0;
+function renderPanel() {
+  const el = $('panel'), t = performance.now();
+  if (t - panelAt < 250) return;  // цифры меняются плавно, перерисовываем 4 раза в секунду
+  panelAt = t;
+  if (!target) { el.classList.remove('show'); return; }
+  const { p, s, inView } = target, r = p.route;
+  const mode = selected ? '<span class="mode">выбран</span>' : inView ? '<span class="mode">в прицеле</span>' : '<span class="mode near">ближайший</span>';
+  const turn = inView ? '' : turnHint(s);
+  const html = `<button class="close" type="button" aria-label="Снять выбор"${selected ? '' : ' hidden'}>×</button>
+    <div class="top"><h3>${esc(p.callsign || p.reg || p.hex)}</h3>${mode}${turn ? `<span class="turn">${turn}</span>` : ''}</div>
+    ${r ? `<div class="rt">${esc(r.origin.code)} → ${esc(r.destination.code)} <span>${esc(r.origin.city || '')} → ${esc(r.destination.city || '')}</span></div>` : ''}
+    <div class="sub">${esc([p.airline, p.type_name || p.type, p.reg].filter(Boolean).join(' · '))}</div>
+    <div class="grid">
+      <div><small>Высота</small>${alt(p)}</div>
+      <div><small>Скорость</small>${p.gs_kt ? nf(p.gs_kt * 1.852) + ' км/ч' : '–'}</div>
+      <div><small>До него</small>${dist(s.d)}</div>
+      <div><small>Над гориз.</small>${nf(s.el, 1)}°</div>
+    </div>
+    <div class="links"><a href="./#${p.hex}">Карточка борта</a><a href="https://globe.adsb.lol/?icao=${p.hex}" target="_blank" rel="noopener">Трек на adsb.lol</a></div>`;
+  if (el._html !== html) {
+    el.innerHTML = html; el._html = html;
+    const c = el.querySelector('.close');
+    if (c) c.addEventListener('click', () => { selected = null; panelAt = 0; });
+  }
+  el.classList.add('show');
+}
+
+// ---------- касания: выбор, калибровка, масштаб ----------
+function tapPlane(hex) {
+  if (document.body.classList.contains('calib')) return calibrate(hex);
+  selected = selected === hex ? null : hex;
+  panelAt = 0;
+}
+
+function calibrate(hex) {
+  const n = nodes.get(hex);
+  if (!n || !n._sight || !orient) return;
+  // куда смотрит центр кадра и где на самом деле самолёт — разница и есть ошибка компаса;
+  // поправка вычитается из alpha: увеличение поворачивает картинку по часовой, центр кадра — к самолёту
+  const delta = norm180(n._sight.az - camera.az);
+  headingCal = norm180(headingCal + delta);
+  save();
+  document.body.classList.remove('calib'); $('calib').classList.remove('on');
+  showCal();
+}
+const showCal = () => { $('calib').textContent = headingCal ? `Калибровка ${headingCal > 0 ? '+' : ''}${nf(headingCal)}°` : 'Калибровка'; };
+$('calib').addEventListener('click', () => {
+  const on = document.body.classList.toggle('calib');
+  $('calib').classList.toggle('on', on);
+});
+showCal();
+
+// щипок двумя пальцами — угол обзора (подогнать под камеру телефона)
+let pinch = null;
+addEventListener('touchstart', e => {
+  if (e.touches.length === 2) pinch = { d: Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY), fov: fovLong };
+}, { passive: true });
+addEventListener('touchmove', e => {
+  if (e.touches.length !== 2 || !pinch) return;
+  const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+  fovLong = Math.min(110, Math.max(20, pinch.fov * pinch.d / d));
+}, { passive: true });
+addEventListener('touchend', () => { if (pinch) { pinch = null; save(); } });
+</script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+- [Physical steps up front](physical-steps-up-front.md) — hardware actions for the user go first, short numbered list

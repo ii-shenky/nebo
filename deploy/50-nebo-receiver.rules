@@ -1,0 +1,11 @@
+// nebo (пользователь xtreme, без sudo) переключает донгл между самолётами и судами:
+// только запуск readsb.service и ais-catcher.service. Ставится в /etc/polkit-1/rules.d/.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" && subject.user == "xtreme") {
+        var unit = action.lookup("unit");
+        var verb = action.lookup("verb");
+        if ((unit == "readsb.service" || unit == "ais-catcher.service") && verb == "start") {
+            return polkit.Result.YES;
+        }
+    }
+});

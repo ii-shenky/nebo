@@ -1,0 +1,27 @@
+# Декодер ADS-B: донгл RTL-SDR → /run/readsb/aircraft.json (его читает nebo).
+# readsb собран из исходников (в Debian он без RTL-SDR), см. CLAUDE.md.
+[Unit]
+Description=readsb - приём ADS-B с RTL-SDR
+Wants=network.target
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/default/readsb
+User=readsb
+SupplementaryGroups=plugdev
+RuntimeDirectory=readsb
+RuntimeDirectoryMode=0755
+# состояние на диске: контур дальности за сутки и следы переживают перезапуск
+StateDirectory=readsb
+ExecStart=/usr/local/bin/readsb $RECEIVER_OPTIONS $DECODER_OPTIONS $NET_OPTIONS $JSON_OPTIONS \
+    --write-json /run/readsb --quiet
+Restart=always
+RestartSec=15
+Nice=-5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

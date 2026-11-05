@@ -1,0 +1,9 @@
+# Параметры readsb. Ставится в /etc/default/readsb один раз, дальше правится руками.
+# Координаты — свой дом, как в /etc/nebo/config.toml (здесь — пример, центр Лимассола); max-range в морских милях (270 ≈ 500 км — дальше горизонта
+# даже для FL450: всё, что «дальше», — ошибочные координаты); ppm — поправка частоты этого донгла (+31, измерил AIS-catcher).
+RECEIVER_OPTIONS="--device-type rtlsdr --gain auto --ppm 31"
+DECODER_OPTIONS="--lat 34.68 --lon 33.04 --max-range 270 --db-file /usr/local/share/readsb/aircraft.csv.gz"
+# Сеть только для своих: Beast-выход 30005 на localhost (пригодится для отправки в Flightradar24)
+NET_OPTIONS="--net --net-bind-address 127.0.0.1 --net-ri-port 0 --net-ro-port 0 --net-sbs-port 30003 --net-bi-port 0 --net-bo-port 30005"
+# --write-state: контур дальности и следы сохраняются на диск (раз в час и при остановке)
+JSON_OPTIONS="--write-json-every 1 --json-location-accuracy 2 --range-outline-hours 24 --write-state /var/lib/readsb"

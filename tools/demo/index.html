@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nebo: приём ADS-B</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f27; --ink-2: #5b6270; --ink-3: #9aa1ad;
+    --line: #e3e6eb; --grid: #d5d9e0; --accent: #1f6fd0; --accent-2: #d9681a; --stale: #b8bec8;
+    --sel: #fff3e4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b; --panel: #1a1e26; --ink: #e8eaee; --ink-2: #a9b0bc; --ink-3: #6f7784;
+      --line: #2a303b; --grid: #333a47; --accent: #5aa0f0; --accent-2: #f0945a; --stale: #4a5160;
+      --sel: #3a2b1c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 600; }
+  .stat { color: var(--ink-2); white-space: nowrap; }
+  .stat b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat.err { color: var(--accent-2); }
+  main { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(0, 1.3fr); gap: 16px; padding: 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .panel h2 { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  #map { height: 520px; background: var(--bg); }
+  @media (max-width: 900px) { #map { height: 360px; } }
+  .leaflet-container { font: inherit; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tiles { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9); } }
+  .plane svg { display: block; overflow: visible; }
+  .plane path { fill: var(--accent); stroke: var(--panel); stroke-width: 1.2; paint-order: stroke; }
+  .plane.stale path { fill: var(--stale); }
+  .plane.sel path { fill: var(--accent-2); }
+  .plane .lbl { position: absolute; left: 26px; top: 6px; font-size: 11px; white-space: nowrap; color: var(--ink);
+    background: color-mix(in srgb, var(--panel) 80%, transparent); padding: 0 3px; border-radius: 3px; }
+  .plane.stale .lbl { color: var(--ink-3); }
+  .plane.sel .lbl { font-weight: 600; }
+  .home-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-2); border: 2px solid var(--panel); }
+  .ring-lbl { color: var(--ink-2); font-size: 11px; white-space: nowrap; text-shadow: 0 0 3px var(--panel), 0 0 3px var(--panel); }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--panel); }
+  th:first-child, td:first-child, th.l, td.l { text-align: left; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--bg); }
+  tbody tr.sel { background: var(--sel); }
+  tbody tr.stale td { color: var(--ink-3); }
+  td.mono { font-family: ui-monospace, Menlo, monospace; }
+  .dim { color: var(--ink-3); }
+  pre { margin: 0; padding: 12px; font: 12px/1.45 ui-monospace, Menlo, monospace; color: var(--ink-2); max-height: 420px; overflow: auto; }
+  .hint { padding: 12px; color: var(--ink-3); }
+  #raw { margin-top: 16px; }
+  .k { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>nebo · приём ADS-B</h1>
+  <span class="stat">бортов <b id="s-ac">–</b> <span class="dim">(с позицией <span id="s-pos">–</span>)</span></span>
+  <span class="stat">сообщений <b id="s-msg">–</b> <span class="dim">(<span id="s-rate">–</span>/с)</span></span>
+  <span class="stat">макс. дальность <b id="s-range">–</b> км</span>
+  <span class="stat">сигнал <b id="s-sig">–</b> <span class="dim">шум <span id="s-noise">–</span> dBFS</span></span>
+  <span class="stat dim" id="s-time"></span>
+  <span class="stat err" id="s-err"></span>
+</header>
+<main>
+  <section class="panel">
+    <h2 id="map-title">Карта</h2>
+    <div id="map" aria-label="положение самолётов относительно приёмника"></div>
+  </section>
+  <section>
+    <div class="panel">
+      <h2>Борты, ближние сверху</h2>
+      <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="l">Код</th><th class="l">Рейс</th><th>Squawk</th><th>Кат.</th>
+          <th title="Барометрическая высота">Высота, м</th><th title="Вертикальная скорость">Верт., м/мин</th>
+          <th title="Путевая скорость">Скор., км/ч</th><th>Курс</th><th>Расст., км</th><th>Азимут</th>
+          <th title="Уровень сигнала">RSSI</th><th>Сообщ.</th><th title="Секунд с последнего сообщения">Видели, с</th>
+          <th title="Секунд с последней позиции">Поз., с</th><th title="Версия ADS-B (0, 1, 2)">Ver</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      </div>
+      <div class="hint" id="hint">Ждём aircraft.json…</div>
+    </div>
+    <div class="panel" id="raw">
+      <h2 id="raw-title">Сырой JSON: нажмите на строку или самолёт</h2>
+      <pre id="raw-body"></pre>
+    </div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let home = null, selected = null, maxRange = 0, lastMsg = null, lastNow = null, rate = null;
+const FT = 0.3048, KT = 1.852;
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const r = Math.PI / 180, R = 6371;
+  const dlat = (lat2 - lat1) * r, dlon = (lon2 - lon1) * r;
+  const a = Math.sin(dlat/2)**2 + Math.cos(lat1*r)*Math.cos(lat2*r)*Math.sin(dlon/2)**2;
+  const d = 2 * R * Math.asin(Math.sqrt(a));
+  const y = Math.sin(dlon) * Math.cos(lat2*r);
+  const x = Math.cos(lat1*r)*Math.sin(lat2*r) - Math.sin(lat1*r)*Math.cos(lat2*r)*Math.cos(dlon);
+  return { d, brg: (Math.atan2(y, x) * 180 / Math.PI + 360) % 360 };
+}
+const fmt = (v, digits = 0) => v == null || Number.isNaN(v) ? '–' : v.toLocaleString('ru-RU', { maximumFractionDigits: digits, minimumFractionDigits: digits });
+const alt = a => a.alt_baro === 'ground' ? 'земля' : fmt(a.alt_baro * FT);
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+function enrich(list) {
+  for (const a of list) {
+    a._stale = a.seen > 15;
+    if (home && a.lat != null) {
+      const h = haversine(home.lat, home.lon, a.lat, a.lon);
+      a._d = h.d; a._brg = h.brg;
+      if (a.seen_pos < 60 && h.d > maxRange && h.d < 600) maxRange = h.d;
+    }
+  }
+  list.sort((x, y) => (x._d ?? 1e9) - (y._d ?? 1e9) || x.seen - y.seen);
+}
+
+function renderTable(list) {
+  $('rows').innerHTML = list.map(a => `
+    <tr data-hex="${a.hex}" class="${a.hex === selected ? 'sel' : ''} ${a._stale ? 'stale' : ''}">
+      <td class="mono">${esc(a.hex)}</td><td class="l">${esc((a.flight || '').trim() || '–')}</td>
+      <td class="mono">${esc(a.squawk ?? '–')}</td><td>${esc(a.category ?? '–')}</td>
+      <td>${alt(a)}</td><td>${fmt(a.baro_rate != null ? a.baro_rate * FT : null)}</td>
+      <td>${fmt(a.gs != null ? a.gs * KT : null)}</td><td>${a.track != null ? fmt(a.track) + '°' : '–'}</td>
+      <td>${fmt(a._d, 1)}</td><td>${a._brg != null ? fmt(a._brg) + '°' : '–'}</td>
+      <td>${fmt(a.rssi, 1)}</td><td>${fmt(a.messages)}</td><td>${fmt(a.seen, 1)}</td>
+      <td>${fmt(a.seen_pos, 1)}</td><td>${a.version ?? '–'}</td>
+    </tr>`).join('');
+  $('hint').textContent = list.length ? '' : 'Самолётов пока нет. Антенну ближе к окну.';
+}
+
+let map = null, markers = new Map(), trails = new Map(), trailLines = new Map(), fitted = false;
+let shapes = null;  // силуэты с сервера (nebo/shapes.py); до загрузки — стрелка
+const ARROW = { paths: ['M0 -50L33 40L0 22L-33 40Z'], box: [-33, -50, 66, 90], noRotate: false };
+fetch('shapes.json').then(r => r.ok ? r.json() : null).then(j => { shapes = j; }).catch(() => {});
+function shapeOf(a) {  // у локального приёмника нет типа борта, форма — по категории ADS-B
+  const name = shapes?.byCategory[(a.category || '').toUpperCase()];
+  return (name && shapes.shapes[name]) || shapes?.shapes.unknown || ARROW;
+}
+const RINGS_KM = [50, 100, 150];
+
+function initMap() {
+  map = L.map('map', { zoomControl: true, attributionControl: true });
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 12, className: 'tiles',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(map);
+  const c = home ? [home.lat, home.lon] : [35, 33];
+  map.setView(c, 8);
+  if (home) {
+    L.marker(c, { icon: L.divIcon({ className: 'home-dot', iconSize: [10, 10] }), interactive: false }).addTo(map);
+    for (const km of RINGS_KM) {
+      L.circle(c, { radius: km * 1000, color: 'var(--grid)', weight: 1, fill: false, interactive: false }).addTo(map);
+      const lat = home.lat + km / 111.2;
+      L.marker([lat, home.lon], { icon: L.divIcon({ className: 'ring-lbl', html: `${km} км`, iconSize: [44, 14], iconAnchor: [22, 16] }), interactive: false }).addTo(map);
+    }
+  }
+}
+
+function planeIcon(a) {
+  const name = (a.flight || '').trim() || a.hex;
+  const cls = 'plane' + (a.hex === selected ? ' sel' : '') + (a._stale ? ' stale' : '');
+  const S = 26, sh = shapeOf(a), [bx, by, bw, bh] = sh.box, k = (S - 4) / Math.max(bw, bh);
+  const rot = sh.noRotate ? '' : ` rotate(${a.track ?? 0})`;
+  const svg = `<svg width="${S}" height="${S}" viewBox="${-S / 2} ${-S / 2} ${S} ${S}"><g transform="${rot} scale(${k.toFixed(4)}) translate(${-(bx + bw / 2)} ${-(by + bh / 2)})">${sh.paths.map(d => `<path d="${d}"/>`).join('')}</g></svg>`;
+  return L.divIcon({ className: cls, iconSize: [S, S], iconAnchor: [S / 2, S / 2], html: `${svg}<span class="lbl">${esc(name)}</span>` });
+}
+
+function renderMap(list) {
+  if (!map) initMap();
+  const withPos = list.filter(a => a.lat != null && a.seen_pos < 60);
+  const seen = new Set();
+  for (const a of withPos) {
+    seen.add(a.hex);
+    const ll = [a.lat, a.lon];
+    let m = markers.get(a.hex);
+    if (!m) {
+      m = L.marker(ll, { icon: planeIcon(a) }).addTo(map);
+      m.on('click', () => { selected = selected === a.hex ? null : a.hex; tick(); });
+      markers.set(a.hex, m);
+    } else { m.setLatLng(ll); m.setIcon(planeIcon(a)); }
+    m.bindTooltip(`${(a.flight || '').trim() || a.hex} · ${alt(a)} м · ${fmt(a._d, 1)} км`, { direction: 'top', offset: [0, -8] });
+    const t = trails.get(a.hex) || [];
+    const last = t[t.length - 1];
+    if (!last || last[0] !== a.lat || last[1] !== a.lon) { t.push(ll); if (t.length > 60) t.shift(); }
+    trails.set(a.hex, t);
+    let line = trailLines.get(a.hex);
+    if (!line) { line = L.polyline(t, { color: 'var(--accent)', weight: 1.5, opacity: 0.5, interactive: false }).addTo(map); trailLines.set(a.hex, line); }
+    else line.setLatLngs(t);
+  }
+  for (const [hex, m] of markers) if (!seen.has(hex)) { map.removeLayer(m); markers.delete(hex); trails.delete(hex); map.removeLayer(trailLines.get(hex)); trailLines.delete(hex); }
+  if (!fitted && withPos.length) {
+    const pts = withPos.map(a => [a.lat, a.lon]); if (home) pts.push([home.lat, home.lon]);
+    map.fitBounds(pts, { padding: [30, 30], maxZoom: 9, animate: false }); fitted = true;
+  }
+  $('map-title').textContent = `Карта · ${withPos.length} с позицией · след до 60 точек`;
+}
+
+function renderRaw(list) {
+  const a = list.find(x => x.hex === selected);
+  if (!a) { if (selected) { $('raw-title').textContent = `Сырой JSON: ${selected} пропал из приёма`; } return; }
+  const clean = Object.fromEntries(Object.entries(a).filter(([k]) => !k.startsWith('_')));
+  $('raw-title').textContent = `Сырой JSON: ${(a.flight || '').trim() || a.hex}`;
+  $('raw-body').innerHTML = JSON.stringify(clean, null, 2).replace(/"([a-z_]+)":/g, '<span class="k">"$1"</span>:');
+}
+
+async function tick() {
+  try {
+    const r = await fetch('data/aircraft.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error(`aircraft.json: HTTP ${r.status}`);
+    const d = await r.json();
+    const list = d.aircraft || [];
+    if (lastMsg != null && d.now > lastNow) rate = (d.messages - lastMsg) / (d.now - lastNow);
+    lastMsg = d.messages; lastNow = d.now;
+    enrich(list);
+    renderTable(list); renderMap(list); renderRaw(list);
+    $('s-ac').textContent = list.length;
+    $('s-pos').textContent = list.filter(a => a.lat != null).length;
+    $('s-msg').textContent = fmt(d.messages);
+    $('s-rate').textContent = rate == null ? '–' : fmt(rate, 1);
+    $('s-range').textContent = fmt(maxRange);
+    $('s-time').textContent = new Date(d.now * 1000).toLocaleTimeString('ru-RU');
+    $('s-err').textContent = '';
+  } catch (e) {
+    $('s-err').textContent = e.message;
+  }
+}
+
+async function stats() {
+  try {
+    const r = await fetch('data/stats.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    const s = await r.json();
+    const m = s.last_1min?.local ?? s.total?.local;
+    $('s-sig').textContent = fmt(m?.signal, 1);
+    $('s-noise').textContent = fmt(m?.noise, 1);
+  } catch (e) { /* stats.json появляется через минуту */ }
+}
+
+async function init() {
+  try {
+    const r = await fetch('data/receiver.json', { cache: 'no-store' });
+    if (r.ok) { const j = await r.json(); if (j.lat != null) home = { lat: j.lat, lon: j.lon }; }
+  } catch (e) {}
+  if (!home) $('s-err').textContent = 'receiver.json без координат: расстояния не считаются';
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-hex]');
+    if (!el) return;
+    selected = el.dataset.hex === selected ? null : el.dataset.hex;
+    if (!selected) { $('raw-title').textContent = 'Сырой JSON: нажмите на строку или самолёт'; $('raw-body').textContent = ''; }
+    tick();
+  });
+  tick(); stats();
+  setInterval(tick, 1000); setInterval(stats, 10000);
+}
+init();
+</script>
+</body>
+</html>

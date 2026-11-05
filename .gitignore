@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.DS_Store
+# личное: адреса, домены, точные координаты (см. CLAUDE.md) и список замен для выгрузки контекста
+CLAUDE.local.md
+.scrub
+# AIP Кипра распространять нельзя (копирайт DCA Cyprus) — собирается локально tools/build_aip.py
+nebo/data/aip_lccc.json

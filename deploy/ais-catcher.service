@@ -1,0 +1,25 @@
+# Приём судов (AIS, 161,975/162,025 МГц) тем же донглом, что и самолёты.
+# Донгл один, поэтому сервис конфликтует с readsb: запуск одного останавливает другой.
+#   суда:     sudo systemctl start ais-catcher
+#   самолёты: sudo systemctl start readsb
+# В автозапуск не включать — по умолчанию донгл слушает самолёты.
+# AIS-catcher собран из исходников (в Debian его нет), см. CLAUDE.md.
+[Unit]
+Description=AIS-catcher - приём судов с RTL-SDR
+Conflicts=readsb.service
+# порядок нужен, чтобы при переключении один сначала отпустил донгл, потом стартовал другой
+# (без него readsb стартовал раньше, падал на занятом донгле и ждал перезапуска 15 с)
+After=network.target readsb.service
+
+[Service]
+EnvironmentFile=/etc/default/ais-catcher
+User=aiscatcher
+SupplementaryGroups=plugdev
+# -X off: не отправлять данные в сообщество aiscatcher.org (по умолчанию AIS-catcher отправляет)
+ExecStart=/usr/local/bin/AIS-catcher -X off -o 0 $RECEIVER_OPTIONS $STATION_OPTIONS $WEB_OPTIONS
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

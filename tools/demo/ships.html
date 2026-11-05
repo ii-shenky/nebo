@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nebo: приём AIS</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f27; --ink-2: #5b6270; --ink-3: #9aa1ad;
+    --line: #e3e6eb; --grid: #d5d9e0; --accent: #0f8a7a; --accent-2: #d9681a; --stale: #b8bec8;
+    --sel: #fff3e4; --land: #eef0f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b; --panel: #1a1e26; --ink: #e8eaee; --ink-2: #a9b0bc; --ink-3: #6f7784;
+      --line: #2a303b; --grid: #333a47; --accent: #3fc4ad; --accent-2: #f0945a; --stale: #4a5160;
+      --sel: #3a2b1c; --land: #20252e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 600; }
+  .stat { color: var(--ink-2); white-space: nowrap; }
+  .stat b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat.err { color: var(--accent-2); }
+  main { display: grid; grid-template-columns: minmax(280px, 420px) 1fr; gap: 16px; padding: 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .panel h2 { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  svg { display: block; width: 100%; height: auto; }
+  .ring { fill: none; stroke: var(--grid); stroke-width: 1; }
+  .axis { stroke: var(--grid); stroke-width: 1; }
+  .ring-label { fill: var(--ink-3); font-size: 11px; }
+  .home { fill: var(--ink-2); }
+  .ship { fill: var(--accent); stroke: var(--panel); stroke-width: 1.5; cursor: pointer; }
+  .ship.stale { fill: var(--stale); }
+  .ship.sel { fill: var(--accent-2); }
+  .ship-label { fill: var(--ink-2); font-size: 11px; pointer-events: none; }
+  .ship-label.sel { fill: var(--ink); font-weight: 600; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  th { color: var(--ink-2); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--panel); }
+  th.l, td.l { text-align: left; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--bg); }
+  tbody tr.sel { background: var(--sel); }
+  tbody tr.stale td { color: var(--ink-3); }
+  td.mono { font-family: ui-monospace, Menlo, monospace; }
+  .dim { color: var(--ink-3); }
+  pre { margin: 0; padding: 12px; font: 12px/1.45 ui-monospace, Menlo, monospace; color: var(--ink-2); max-height: 420px; overflow: auto; }
+  .hint { padding: 12px; color: var(--ink-3); }
+  #raw { margin-top: 16px; }
+  .k { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>nebo · приём AIS</h1>
+  <span class="stat">судов <b id="s-ships">–</b> <span class="dim">(с именем <span id="s-named">–</span>)</span></span>
+  <span class="stat">сообщений <b id="s-msg">–</b> <span class="dim">(<span id="s-rate">–</span>/мин)</span></span>
+  <span class="stat">макс. дальность <b id="s-range">–</b> км</span>
+  <span class="stat">уровень <b id="s-level">–</b> dB</span>
+  <span class="stat">поправка <b id="s-ppm">–</b> ppm</span>
+  <span class="stat dim" id="s-time"></span>
+  <span class="stat err" id="s-err"></span>
+</header>
+<main>
+  <section class="panel">
+    <h2 id="radar-title">Радар</h2>
+    <svg id="radar" viewBox="0 0 600 600" aria-label="положение судов относительно приёмника"></svg>
+  </section>
+  <section>
+    <div class="panel">
+      <h2>Суда, ближние сверху</h2>
+      <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="l" title="Номер судовой станции">MMSI</th><th class="l">Имя</th><th class="l">Флаг</th><th class="l">Тип</th><th class="l">Статус</th>
+          <th title="Скорость относительно грунта, узлы">Узлы</th><th title="Курс относительно грунта">Курс</th><th title="Истинный курс (куда смотрит нос)">Нос</th>
+          <th>Длина, м</th><th>Расст., км</th><th>Азимут</th><th class="l">Куда</th>
+          <th title="Уровень сигнала">dB</th><th>Сообщ.</th><th title="Секунд с последнего сообщения">Видели, с</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      </div>
+      <div class="hint" id="hint">Ждём ships.json…</div>
+    </div>
+    <div class="panel" id="raw">
+      <h2 id="raw-title">Сырой JSON: нажмите на строку или судно</h2>
+      <pre id="raw-body"></pre>
+    </div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let selected = null, lastCount = null, lastT = null, rate = null;
+const STATUS = { 0: 'на ходу', 1: 'на якоре', 2: 'без управления', 3: 'ограничен в манёвре', 4: 'ограничен осадкой',
+  5: 'у причала', 6: 'на мели', 7: 'ловит рыбу', 8: 'под парусом', 11: 'буксир на ходу', 12: 'буксир толкает', 14: 'AIS-SART', 15: '–' };
+function shipType(t) {
+  if (t == null || t === 0) return '–';
+  if (t >= 20 && t <= 29) return 'экраноплан';
+  if (t === 30) return 'рыболовное'; if (t === 31 || t === 32) return 'буксир с составом';
+  if (t === 33) return 'дноуглубитель'; if (t === 34) return 'водолазное'; if (t === 35) return 'военное';
+  if (t === 36) return 'парусное'; if (t === 37) return 'прогулочное';
+  if (t >= 40 && t <= 49) return 'скоростное'; if (t === 50) return 'лоцман'; if (t === 51) return 'спасатель';
+  if (t === 52) return 'буксир'; if (t === 53) return 'портовое'; if (t === 55) return 'полиция';
+  if (t === 58) return 'медицинское';
+  if (t >= 60 && t <= 69) return 'пассажирское'; if (t >= 70 && t <= 79) return 'грузовое';
+  if (t >= 80 && t <= 89) return 'танкер'; if (t >= 90 && t <= 99) return 'прочее';
+  return String(t);
+}
+function kind(s) {  // не судно: базовая станция, буй, самолёт СПАС… Для судов — класс передатчика A или B
+  const special = { 9: 'самолёт', 10: 'вертолёт', 11: 'базовая станция', 12: 'буй/знак', 13: 'SART/EPIRB' };
+  if (special[s.shipclass]) return special[s.shipclass];
+  return { 1: 'класс A', 2: 'класс B' }[s.mmsi_type] || '';
+}
+const fmt = (v, d = 0) => v == null || Number.isNaN(v) ? '–' : v.toLocaleString('ru-RU', { maximumFractionDigits: d, minimumFractionDigits: d });
+const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const name = s => (s.shipname || '').trim() || String(s.mmsi);
+const length = s => s.to_bow != null && s.to_stern != null ? s.to_bow + s.to_stern : null;
+const km = s => s.distance != null ? s.distance * 1.852 : null;  // AIS-catcher считает в морских милях
+
+function renderTable(list) {
+  $('rows').innerHTML = list.map(s => `
+    <tr data-mmsi="${s.mmsi}" class="${s.mmsi === selected ? 'sel' : ''} ${s._stale ? 'stale' : ''}">
+      <td class="mono l">${s.mmsi}</td><td class="l">${esc((s.shipname || '').trim() || '–')} <span class="dim">${kind(s)}</span></td>
+      <td class="l">${esc(s.country || '–')}</td><td class="l">${shipType(s.shiptype)}</td><td class="l">${STATUS[s.status] ?? (s.status ?? '–')}</td>
+      <td>${fmt(s.speed, 1)}</td><td>${s.cog != null ? fmt(s.cog) + '°' : '–'}</td><td>${s.heading != null ? fmt(s.heading) + '°' : '–'}</td>
+      <td>${fmt(length(s))}</td><td>${fmt(km(s), 1)}</td><td>${s.bearing != null ? fmt(s.bearing) + '°' : '–'}</td>
+      <td class="l">${esc((s.destination || '').trim() || '–')}</td>
+      <td>${fmt(s.level, 1)}</td><td>${fmt(s.count)}</td><td>${fmt(s.last_signal)}</td>
+    </tr>`).join('');
+  $('hint').textContent = list.length ? '' : 'Судов пока нет. Антенна под 1090 МГц, на 162 МГц слышно только близкие.';
+}
+
+function renderRadar(list) {
+  const svg = $('radar'), C = 300, R = 280;
+  const withPos = list.filter(s => s.lat != null && km(s) != null);
+  const far = Math.max(1, ...withPos.map(km));
+  const steps = [2, 4, 10, 20, 40, 100, 200];
+  const scale = steps.find(x => x >= far) ?? Math.ceil(far / 100) * 100;
+  const k = R / scale;
+  let out = '';
+  for (const f of [0.25, 0.5, 0.75, 1]) {
+    out += `<circle class="ring" cx="${C}" cy="${C}" r="${R * f}"/>`;
+    out += `<text class="ring-label" x="${C + 4}" y="${C - R * f - 3}">${+(scale * f).toFixed(1)} км</text>`;
+  }
+  out += `<line class="axis" x1="${C}" y1="${C - R}" x2="${C}" y2="${C + R}"/><line class="axis" x1="${C - R}" y1="${C}" x2="${C + R}" y2="${C}"/>`;
+  out += `<text class="ring-label" x="${C}" y="14" text-anchor="middle">С</text>`;
+  out += `<circle class="home" cx="${C}" cy="${C}" r="4"/>`;
+  for (const s of withPos) {
+    const rad = s.bearing * Math.PI / 180, d = km(s);
+    const x = C + Math.sin(rad) * d * k, y = C - Math.cos(rad) * d * k;
+    const cls = (s.mmsi === selected ? 'sel' : '') + (s._stale ? ' stale' : '');
+    const moving = s.speed != null && s.speed > 0.5 && (s.cog != null || s.heading != null);
+    const mark = moving
+      ? `<polygon class="ship ${cls}" transform="translate(${x} ${y}) rotate(${s.heading ?? s.cog})" points="0,-9 6,7 -6,7"/>`
+      : `<circle class="ship ${cls}" cx="${x}" cy="${y}" r="5"/>`;
+    out += `<g data-mmsi="${s.mmsi}"><title>${esc(name(s))} · ${fmt(d, 1)} км · ${fmt(s.speed, 1)} уз</title>${mark}
+      ${(s.shipname || '').trim() || withPos.length <= 12 || s.mmsi === selected ? `<text class="ship-label ${cls}" x="${x + 9}" y="${y + 4}">${esc(name(s))}</text>` : ''}</g>`;
+  }
+  svg.innerHTML = out;
+  $('radar-title').textContent = `Радар · кольцо ${+(scale / 4).toFixed(1)} км · ${withPos.length} с позицией`;
+}
+
+function renderRaw(list) {
+  const s = list.find(x => x.mmsi === selected);
+  if (!s) { if (selected) $('raw-title').textContent = `Сырой JSON: ${selected} пропал из приёма`; return; }
+  const clean = Object.fromEntries(Object.entries(s).filter(([k]) => !k.startsWith('_')));
+  $('raw-title').textContent = `Сырой JSON: ${name(s)}`;
+  $('raw-body').innerHTML = JSON.stringify(clean, null, 2).replace(/"([a-z_]+)":/g, '<span class="k">"$1"</span>:');
+}
+
+async function tick() {
+  try {
+    const r = await fetch('data/ships.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error(`ships.json: HTTP ${r.status} ${(await r.text()).slice(0, 80)}`);
+    const d = await r.json();
+    const list = (d.ships || []).filter(s => s.mmsi);
+    for (const s of list) s._stale = s.last_signal > 600;
+    list.sort((a, b) => (km(a) ?? 1e9) - (km(b) ?? 1e9) || a.last_signal - b.last_signal);
+    renderTable(list); renderRadar(list); renderRaw(list);
+    $('s-ships').textContent = list.length;
+    $('s-named').textContent = list.filter(s => (s.shipname || '').trim()).length;
+    $('s-time').textContent = new Date().toLocaleTimeString('ru-RU');
+    $('s-err').textContent = '';
+  } catch (e) { $('s-err').textContent = e.message; }
+}
+
+async function stats() {
+  try {
+    const r = await fetch('data/stat.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    const t = (await r.json()).total || {};
+    const now = Date.now() / 1000;
+    if (lastCount != null && now > lastT) rate = (t.count - lastCount) / (now - lastT) * 60;
+    lastCount = t.count; lastT = now;
+    $('s-msg').textContent = fmt(t.count);
+    $('s-rate').textContent = rate == null ? '–' : fmt(rate, 1);
+    $('s-range').textContent = fmt(t.dist != null ? t.dist * 1.852 : null, 1);
+    $('s-level').textContent = t.level_max != null ? `${fmt(t.level_min, 1)}…${fmt(t.level_max, 1)}` : '–';
+    $('s-ppm').textContent = fmt(t.ppm, 1);
+  } catch (e) {}
+}
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-mmsi]');
+  if (!el) return;
+  const m = Number(el.dataset.mmsi);
+  selected = m === selected ? null : m;
+  if (!selected) { $('raw-title').textContent = 'Сырой JSON: нажмите на строку или судно'; $('raw-body').textContent = ''; }
+  tick();
+});
+tick(); stats();
+setInterval(tick, 2000); setInterval(stats, 5000);
+</script>
+</body>
+</html>

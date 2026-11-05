@@ -1,0 +1,22 @@
+[Unit]
+Description=nebo - табло самолётов поблизости
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=xtreme
+WorkingDirectory=/home/xtreme/nebo
+ExecStart=/usr/bin/python3 -m nebo --config /etc/nebo/config.toml
+Environment=PYTHONUNBUFFERED=1
+StateDirectory=nebo
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

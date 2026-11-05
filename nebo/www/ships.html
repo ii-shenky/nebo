@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nebo · суда</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-50 -50 100 100'%3E%3Cpath d='M0 -46L22 -10L22 40L-22 40L-22 -10Z' fill='%2320a08c'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="nebo.css">
+<style>
+  /* цвета классов судов (как группирует AIS-catcher) */
+  :root {
+    --c-cargo: #2f8f4e; --c-tanker: #c2361d; --c-passenger: #1f6fd0; --c-highspeed: #b88a00; --c-special: #0f8a9a;
+    --c-fishing: #d9681a; --c-b: #8a4fc7; --c-other: #7d8594; --c-aton: #3b4250;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --c-cargo: #5cc27e; --c-tanker: #ef6a50; --c-passenger: #5ea2f2; --c-highspeed: #e6bb3a; --c-special: #43c3d1;
+      --c-fishing: #f0945a; --c-b: #b48ae8; --c-other: #8e96a5; --c-aton: #c3c9d4;
+    }
+  }
+  :root[data-theme="dark"] {
+    --c-cargo: #5cc27e; --c-tanker: #ef6a50; --c-passenger: #5ea2f2; --c-highspeed: #e6bb3a; --c-special: #43c3d1;
+    --c-fishing: #f0945a; --c-b: #b48ae8; --c-other: #8e96a5; --c-aton: #c3c9d4;
+  }
+  .brand svg path { fill: var(--c-special); }
+  .ship { cursor: pointer; color: var(--c-other); }
+  .ship svg { display: block; overflow: visible; }
+  .ship .hull { fill: currentColor; stroke: var(--panel); stroke-width: 1.5; paint-order: stroke; }
+  .ship.sel .hull { stroke: var(--sel); stroke-width: 3; }
+  .ship .lbl { position: absolute; left: 20px; top: 2px; font-size: 11px; white-space: nowrap; color: var(--ink);
+    background: color-mix(in srgb, var(--panel) 82%, transparent); padding: 0 4px; border-radius: 3px; pointer-events: none; }
+  .ship.sel .lbl { font-weight: 600; color: var(--sel); }
+  #map.quiet .ship:not(.sel) .lbl { display: none; }
+  .c2 { color: var(--c-cargo); } .c3 { color: var(--c-b); } .c4 { color: var(--c-passenger); } .c5 { color: var(--c-special); }
+  .c6 { color: var(--c-tanker); } .c7 { color: var(--c-highspeed); } .c8 { color: var(--c-fishing); }
+  .c11, .c12, .c13 { color: var(--c-aton); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: currentColor; }
+  .ship-head { padding: 14px 16px 12px; }
+  .ship-head h3 { margin: 0; font-size: 26px; line-height: 1.15; font-weight: 700; overflow-wrap: anywhere; }
+  .ship-head .what { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; color: var(--ink-2); }
+  .ship-head .what img { width: 20px; height: 14px; object-fit: cover; border-radius: 2px; box-shadow: 0 0 0 1px var(--line); }
+  .dest { padding: 0 16px 12px; }
+  .dest .to { font-size: 20px; font-weight: 700; letter-spacing: .02em; }
+  .dest .note { color: var(--ink-3); font-size: 12px; }
+  .links { display: flex; gap: 14px; padding: 10px 16px; border-top: 1px solid var(--line); font-size: 13px; }
+  .links a { color: var(--sel); }
+  td.nm { font-weight: 600; }
+  .photo .big { width: 22%; height: auto; opacity: .4; }
+  .photo .big .hull { fill: currentColor; stroke: none; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="-50 -50 100 100" aria-hidden="true"><path d="M0 -46L22 -10L22 40L-22 40L-22 -10Z"/></svg>
+    nebo
+  </div>
+  <nav class="tabs" aria-label="Разделы"><a href="./">Самолёты</a><a href="ships" aria-current="page">Суда</a><a href="ar" title="Наведи телефон на небо">AR</a></nav>
+  <span class="stat">судов <b id="s-all">–</b> <span class="muted">(с именем <span id="s-named">–</span>)</span></span>
+  <span class="stat">в движении <b id="s-moving">–</b></span>
+  <span class="stat">сообщений <b id="s-rate">–</b>/мин</span>
+  <span class="stat">уровень <b id="s-level">–</b> дБ</span>
+  <span class="stat">дальше всех <b id="s-max">–</b></span>
+  <span class="status"><span class="dot" id="s-dot"></span><span id="s-src">AIS</span><span class="err" id="s-err"></span></span>
+</header>
+
+<div class="off" id="off" hidden></div>
+
+<main>
+  <section class="panel" id="map-panel">
+    <h2>Карта <span id="map-note">подписи — при приближении</span></h2>
+    <div id="map" class="quiet" role="img" aria-label="Карта: суда вокруг дома"></div>
+    <div class="legend">
+      <span class="c2"><i class="swatch"></i><span style="color:var(--ink-3)">грузовые</span></span>
+      <span class="c6"><i class="swatch"></i><span style="color:var(--ink-3)">танкеры</span></span>
+      <span class="c4"><i class="swatch"></i><span style="color:var(--ink-3)">пассажирские</span></span>
+      <span class="c5"><i class="swatch"></i><span style="color:var(--ink-3)">служебные</span></span>
+      <span class="c8"><i class="swatch"></i><span style="color:var(--ink-3)">рыболовные</span></span>
+      <span class="c3"><i class="swatch"></i><span style="color:var(--ink-3)">малые (класс B)</span></span>
+      <span class="c12"><i class="swatch"></i><span style="color:var(--ink-3)">знаки и станции</span></span>
+      <span style="color:var(--ink-3)">кружок — стоит, стрелка — идёт</span>
+    </div>
+  </section>
+
+  <aside class="panel" id="card" aria-live="polite">
+    <div class="card-empty">Нажмите на судно на карте или в таблице</div>
+  </aside>
+
+  <section class="panel" id="table-panel">
+    <h2>Все суда, ближние сверху</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="l">Имя</th><th class="l">Флаг</th><th class="l">Тип</th><th class="l">Статус</th><th>Скорость</th>
+          <th>Длина</th><th>Расст.</th><th>Где</th><th class="l">Куда</th><th title="Последнее сообщение">Слышали</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="hint" id="hint">Загрузка…</div>
+  </section>
+</main>
+<footer>
+  Карта © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>. Приём — AIS-catcher, флаги — flagcdn.com.
+  Ссылки на MarineTraffic и VesselFinder — по номеру судовой станции (MMSI).
+</footer>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const nf = (v, d = 0) => v == null || Number.isNaN(v) ? '–' : v.toLocaleString('ru-RU', { maximumFractionDigits: d, minimumFractionDigits: d });
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const COMPASS = ['С', 'ССВ', 'СВ', 'ВСВ', 'В', 'ВЮВ', 'ЮВ', 'ЮЮВ', 'Ю', 'ЮЮЗ', 'ЮЗ', 'ЗЮЗ', 'З', 'ЗСЗ', 'СЗ', 'ССЗ'];
+const compass = deg => COMPASS[Math.round((deg % 360) / 22.5) % 16];
+const regionName = (() => { try { const dn = new Intl.DisplayNames(['ru'], { type: 'region' }); return c => { try { return dn.of(c); } catch (e) { return c; } }; } catch (e) { return c => c; } })();
+
+// ---------- справочники AIS ----------
+const STATUS = { 0: 'на ходу', 1: 'на якоре', 2: 'без управления', 3: 'ограничен в манёвре', 4: 'ограничен осадкой',
+  5: 'у причала', 6: 'на мели', 7: 'ловит рыбу', 8: 'под парусом', 11: 'буксирует', 12: 'толкает', 14: 'аварийный маяк' };
+function shipType(s) {
+  const t = s.shiptype;
+  const special = { 9: 'самолёт поиска и спасения', 10: 'вертолёт поиска и спасения', 11: 'береговая станция', 12: 'навигационный знак', 13: 'аварийный маяк' };
+  if (special[s.shipclass]) return special[s.shipclass];
+  if (!t) return s.mmsi_type === 2 ? 'малое судно' : '';
+  if (t >= 20 && t <= 29) return 'экраноплан';
+  const exact = { 30: 'рыболовное', 31: 'буксир', 32: 'буксир', 33: 'дноуглубитель', 34: 'водолазное', 35: 'военное',
+    36: 'парусное', 37: 'прогулочное', 50: 'лоцманское', 51: 'спасательное', 52: 'буксир', 53: 'портовое',
+    54: 'против загрязнений', 55: 'полиция', 58: 'медицинское' };
+  if (exact[t]) return exact[t];
+  if (t >= 40 && t <= 49) return 'скоростное';
+  if (t >= 60 && t <= 69) return 'пассажирское';
+  if (t >= 70 && t <= 79) return 'грузовое';
+  if (t >= 80 && t <= 89) return 'танкер';
+  return 'прочее';
+}
+const name = s => (s.shipname || '').trim() || `MMSI ${s.mmsi}`;
+const len = s => s.to_bow + s.to_stern || null;
+const beam = s => s.to_port + s.to_starboard || null;
+const moving = s => s.speed != null && s.speed >= 0.5;
+const isMark = s => s.shipclass >= 11;
+const knots = v => v == null ? '–' : `${nf(v, 1)} уз`;
+const dist = km => km == null ? '–' : km < 10 ? `${nf(km, 1)} км` : `${nf(km)} км`;
+function ago(sec) {
+  if (sec == null) return '–';
+  if (sec < 60) return `${nf(sec)} с`;
+  if (sec < 3600) return `${nf(Math.floor(sec / 60))} мин`;
+  return `${nf(sec / 3600, 1)} ч`;
+}
+function eta(s) {
+  if (!s.eta_month || !s.eta_day) return null;
+  const p = n => String(n).padStart(2, '0');
+  return `${p(s.eta_day)}.${p(s.eta_month)}${s.eta_hour != null && s.eta_hour < 24 ? ` ${p(s.eta_hour)}:${p(s.eta_minute ?? 0)}` : ''} UTC`;
+}
+
+// ---------- состояние ----------
+let data = null, selected = null, path = [], pathFor = null;
+let photo = null, photoKey = null;  // описание фото с Wikimedia Commons для выбранного судна
+const current = () => data && data.ok && data.ships.find(s => s.mmsi === selected) || null;
+
+// ---------- карта ----------
+let map, markers = new Map(), pathLine = null, fitted = false;
+const RINGS_KM = [1, 2, 5, 10, 20, 50];
+
+function initMap(home) {
+  map = L.map('map', { attributionControl: false }).setView([home.lat, home.lon], 12);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 17, className: 'tiles' }).addTo(map);
+  for (const km of RINGS_KM) {
+    L.circle([home.lat, home.lon], { radius: km * 1000, color: css('--grid'), weight: 1, fill: false, interactive: false }).addTo(map);
+    L.marker([home.lat + km / 111.2, home.lon], { interactive: false,
+      icon: L.divIcon({ className: 'ring-lbl', html: `${km} км`, iconSize: [44, 14], iconAnchor: [22, 16] }) }).addTo(map);
+  }
+  L.marker([home.lat, home.lon], { interactive: false, icon: L.divIcon({ className: 'home', iconSize: [12, 12] }) }).addTo(map);
+  map.on('click', () => select(null));
+  const quiet = () => $('map').classList.toggle('quiet', map.getZoom() < 13);
+  map.on('zoomend', quiet); quiet();
+}
+
+function shipSvg(s, size) {
+  const h = size / 2;
+  let shape;
+  if (s.shipclass === 12) shape = `<path class="hull" d="M0 ${-h + 2}L${h - 2} 0L0 ${h - 2}L${-h + 2} 0Z"/>`;          // знак — ромб
+  else if (isMark(s)) shape = `<rect class="hull" x="${-h + 3}" y="${-h + 3}" width="${size - 6}" height="${size - 6}"/>`; // станция — квадрат
+  else if (moving(s)) {
+    const rot = s.heading ?? s.cog ?? 0;
+    shape = `<path class="hull" transform="rotate(${rot})" d="M0 ${-h}L${h * 0.5} ${-h * 0.3}L${h * 0.5} ${h * 0.85}L${-h * 0.5} ${h * 0.85}L${-h * 0.5} ${-h * 0.3}Z"/>`;
+  } else shape = `<circle class="hull" r="${h * 0.42}"/>`;
+  return `<svg width="${size}" height="${size}" viewBox="${-h} ${-h} ${size} ${size}" aria-hidden="true">${shape}</svg>`;
+}
+
+function shipIcon(s) {
+  const S = 18;
+  const cls = `ship c${s.shipclass}` + (s.mmsi === selected ? ' sel' : '');
+  const label = (s.shipname || '').trim() ? `<span class="lbl">${esc(s.shipname.trim())}</span>` : '';
+  return L.divIcon({ className: cls, iconSize: [S, S], iconAnchor: [S / 2, S / 2], html: shipSvg(s, S) + label });
+}
+
+function renderMap() {
+  if (!map) initMap(data.home);
+  const ships = data.ok ? data.ships : [];
+  const seen = new Set();
+  for (const s of ships) {
+    seen.add(s.mmsi);
+    const key = [s.lat, s.lon, s.heading, s.cog, s.speed, s.shipclass, s.shipname, s.mmsi === selected].join('|');
+    let m = markers.get(s.mmsi);
+    if (!m) {
+      m = L.marker([s.lat, s.lon], { icon: shipIcon(s), riseOnHover: true }).addTo(map);
+      m.on('click', e => { L.DomEvent.stopPropagation(e); select(s.mmsi); });
+      markers.set(s.mmsi, m);
+    } else if (m._key !== key) {
+      m.setLatLng([s.lat, s.lon]); m.setIcon(shipIcon(s));
+    }
+    m._key = key;
+    m.setZIndexOffset(s.mmsi === selected ? 1000 : moving(s) ? 100 : 0);
+  }
+  for (const [k, m] of markers) if (!seen.has(k)) { map.removeLayer(m); markers.delete(k); }
+  if (pathLine) { map.removeLayer(pathLine); pathLine = null; }
+  const cur = current();
+  if (cur && pathFor === cur.mmsi && path.length > 1)
+    pathLine = L.polyline([...path, [cur.lat, cur.lon]], { color: css('--sel'), weight: 2.5, opacity: 0.8, interactive: false }).addTo(map);
+  if (!fitted && ships.length) {
+    const pts = ships.filter(s => s.dist_km < 60).map(s => [s.lat, s.lon]);
+    pts.push([data.home.lat, data.home.lon]);
+    map.fitBounds(pts, { padding: [30, 30], maxZoom: 14, animate: false });
+    fitted = true;
+  }
+}
+
+// ---------- таблица ----------
+function setHtml(el, html) { if (el._html !== html) { el.innerHTML = html; el._html = html; } }
+
+function renderTable() {
+  const ships = data.ok ? data.ships : [];
+  setHtml($('rows'), ships.map(s => `
+    <tr data-mmsi="${s.mmsi}" class="${s.mmsi === selected ? 'sel' : ''} ${s.last_signal > 600 ? 'far' : ''}">
+      <td class="l nm"><span class="c${s.shipclass}"><i class="swatch"></i></span>${esc(name(s))}</td>
+      <td class="l">${esc(s.country || '')}</td>
+      <td class="l">${esc(shipType(s))}</td>
+      <td class="l">${esc(STATUS[s.status] || '')}</td>
+      <td>${moving(s) ? knots(s.speed) : s.speed != null ? 'стоит' : '–'}</td>
+      <td>${len(s) ? `${nf(len(s))} м` : '–'}</td>
+      <td>${dist(s.dist_km)}</td><td>${compass(s.bearing_deg)}</td>
+      <td class="l">${esc((s.destination || '').trim())}</td>
+      <td>${ago(s.last_signal)}</td>
+    </tr>`).join(''));
+  $('hint').hidden = ships.length > 0;
+  $('hint').textContent = data.ok ? 'Судов с координатами пока нет.' : 'Приёмник судов выключен.';
+}
+
+// ---------- карточка ----------
+function renderCard() {
+  const s = current(), el = $('card');
+  if (!s) {
+    setHtml(el, `<div class="card-empty">${selected && data.ok ? 'Судно пропало из приёма' : 'Нажмите на судно на карте или в таблице'}</div>`);
+    return;
+  }
+  const flag = data.flag_url && s.country ? `<img src="${data.flag_url.replace('{key}', s.country.toLowerCase())}" alt="" onerror="this.remove()">` : '';
+  const status = STATUS[s.status];
+  const dest = (s.destination || '').trim();
+  const e = eta(s);
+  const rows = [
+    ['Скорость', moving(s) ? `${knots(s.speed)} <small>${nf(s.speed * 1.852, 1)} км/ч</small>` : s.speed != null ? 'стоит' : '–'],
+    ['Курс', s.cog != null && moving(s) ? `${nf(s.cog)}° <small>${compass(s.cog)}</small>` : '–'],
+    ['Нос смотрит', s.heading != null ? `${nf(s.heading)}° <small>${compass(s.heading)}</small>` : '–'],
+    ['Расстояние', `${dist(s.dist_km)} <small>${compass(s.bearing_deg)}, ${nf(s.bearing_deg)}°</small>`],
+    ['Размер', len(s) ? `${nf(len(s))} × ${nf(beam(s))} м` : '–'],
+    ['Осадка', s.draught ? `${nf(s.draught, 1)} м` : '–'],
+    ['MMSI', `${s.mmsi} <small>${s.mmsi_type === 1 ? 'класс A' : s.mmsi_type === 2 ? 'класс B' : ''}</small>`],
+    ['IMO', s.imo ? String(s.imo) : '–'],
+    ['Позывной', esc(s.callsign || '–')],
+    ['Сигнал', s.level == null ? '–' : `${nf(s.level, 1)} <small>дБ</small>`],
+    ['Сообщений', nf(s.count)],
+    ['Слышали', `${ago(s.last_signal)} <small>назад</small>`],
+  ];
+  setHtml(el, `
+    <div class="ship-head">
+      <h3><span class="c${s.shipclass}"><i class="swatch" style="width:14px;height:14px;margin-right:8px;vertical-align:1px"></i></span>${esc(name(s))}</h3>
+      <div class="what">${flag}<span>${esc([regionName(s.country || ''), shipType(s)].filter(Boolean).join(' · '))}</span>
+        ${status ? `<span class="badge far">${esc(status)}</span>` : ''}</div>
+    </div>
+    <div class="photo">${photoHtml(s)}</div>
+    ${dest || e ? `<div class="dest"><div class="to">→ ${esc(dest || '?')}</div>${e ? `<div class="note">прибытие ${esc(e)}</div>` : ''}</div>` : ''}
+    <dl>${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
+    ${isMark(s) ? '' : `<div class="links">
+      <a href="https://www.marinetraffic.com/en/ais/details/ships/mmsi:${s.mmsi}" target="_blank" rel="noopener">MarineTraffic</a>
+      <a href="https://www.vesselfinder.com/vessels/details/${s.mmsi}" target="_blank" rel="noopener">VesselFinder</a></div>`}`);
+}
+
+function photoHtml(s) {
+  const ph = photoKey === `${s.mmsi}:${s.imo || ''}` && photo ? photo : { state: 'pending' };
+  if (ph.state === 'found') {
+    const lic = ph.license ? (ph.license_url ? ` · <a href="${esc(ph.license_url)}" target="_blank" rel="noopener">${esc(ph.license)}</a>` : ` · ${esc(ph.license)}`) : '';
+    return `<img src="${esc(ph.src)}" alt="Фото: ${esc(ph.ship || name(s))}">
+      <div class="credit"><span title="${esc(ph.author)}">© ${esc(ph.author)}${lic}</span>
+      <a href="${esc(ph.link)}" target="_blank" rel="noopener">Wikimedia Commons</a></div>`;
+  }
+  const msg = { pending: 'ищу фото…', missing: 'на Wikimedia Commons фото нет', off: 'фото судов выключены в конфиге' }[ph.state] || '';
+  const icon = shipSvg({ ...s, speed: 1, heading: 90, cog: 90 }, 120).replace('<svg ', `<svg class="big c${s.shipclass}" `);
+  return `${icon}<span class="none">${msg}</span>`;
+}
+
+async function loadPhoto() {
+  const s = current();
+  if (!s || isMark(s)) return;
+  const key = `${s.mmsi}:${s.imo || ''}`;
+  if (photoKey === key && photo && photo.state !== 'pending') return;  // уже знаем; IMO появится — спросим заново
+  try {
+    const r = await fetch(`api/ship/${s.mmsi}/photo${s.imo ? `?imo=${s.imo}` : ''}`, { cache: 'no-store' });
+    if (!r.ok || selected !== s.mmsi) return;
+    photo = await r.json(); photoKey = key;
+    renderCard();
+  } catch (e) {}
+}
+
+// ---------- шапка и состояние приёмника ----------
+function renderHeader() {
+  const off = $('off');
+  if (!data.ok) {
+    off.hidden = false;
+    const busy = data.reason === 'switching' || (data.reason === 'planes' && data.switch);
+    off.classList.toggle('busy', busy);
+    setHtml(off, busy
+      ? `<b>Переключаю антенну на суда…</b>
+         <p>Самолёты на табло пропадут, пока открыта эта страница. Закроете её — через 2 минуты антенна вернётся к самолётам.</p>`
+      : data.reason === 'planes'
+      ? `<b>Приёмник судов выключен: донгл сейчас слушает самолёты.</b>
+         <p>Антенна одна. Переключить на суда — <code>sudo systemctl start ais-catcher</code> (самолёты остановятся),
+         обратно — <code>sudo systemctl start readsb</code>.</p>`
+      : data.own_receiver === false
+      ? `<b>Суда видны только со своей антенной.</b>
+         <p>Самолёты сейчас берутся из интернета (adsb.lol), а суда nebo принимает сам: нужен донгл RTL-SDR
+         и AIS-catcher — как поставить, написано в README.</p>`
+      : `<b>Нет связи с AIS-catcher.</b><p>Запустить: <code>sudo systemctl start ais-catcher</code>. Ошибка: ${esc(data.error || '')}</p>`);
+    $('s-dot').classList.add('bad');
+    $('s-src').textContent = 'AIS выключен';
+    for (const id of ['s-all', 's-named', 's-moving', 's-rate', 's-level', 's-max']) $(id).textContent = '–';
+    return;
+  }
+  const fresh = data.since_switch != null && data.since_switch < 300;
+  off.hidden = !fresh;
+  off.classList.remove('busy');
+  if (fresh) setHtml(off, `<b>Антенна слушает суда ${ago(data.since_switch)}.</b>
+    <p>Список будет расти: суда у причала передают координаты раз в 3 минуты, имя и назначение — раз в 6.
+    Закроете страницу — через 2 минуты антенна вернётся к самолётам.</p>`);
+  const ships = data.ships;
+  $('s-all').textContent = ships.length;
+  $('s-named').textContent = ships.filter(s => (s.shipname || '').trim()).length;
+  $('s-moving').textContent = ships.filter(moving).length;
+  $('s-max').textContent = ships.length ? dist(Math.max(...ships.map(s => s.dist_km))) : '–';
+  const st = data.stat.last_minute || data.stat.session || {};
+  $('s-rate').textContent = data.stat.last_minute ? nf(data.stat.last_minute.count) : '–';
+  $('s-level').textContent = st.level_max != null ? `${nf(st.level_min, 0)}…${nf(st.level_max, 0)}` : '–';
+  $('s-dot').classList.remove('bad');
+  $('s-src').textContent = 'AIS-catcher';
+  $('s-err').textContent = '';
+}
+
+// ---------- данные ----------
+function select(mmsi) {
+  selected = mmsi;
+  history.replaceState(null, '', mmsi ? `#${mmsi}` : location.pathname);  // ссылку на судно можно отправить
+  if (mmsi !== pathFor) { path = []; pathFor = null; loadPath(); }
+  render(); loadPhoto();
+}
+
+async function loadPath() {
+  const m = selected;
+  if (!m) return;
+  try {
+    const r = await fetch(`api/ship/${m}/path`, { cache: 'no-store' });
+    if (!r.ok || m !== selected) return;
+    path = await r.json(); pathFor = m;
+    renderMap();
+  } catch (e) {}
+}
+
+function render() {
+  if (!data) return;
+  renderHeader(); renderMap(); renderTable(); renderCard();
+}
+
+async function tick() {
+  try {
+    // ?view=1 — страницу сейчас видно: nebo переключит донгл на суда
+    const r = await fetch(`api/ships${document.visibilityState === 'visible' ? '?view=1' : ''}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    data = await r.json();
+    render();
+  } catch (e) {
+    $('s-dot').classList.add('bad');
+    $('s-err').textContent = 'нет связи с nebo';
+  }
+}
+
+document.addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-mmsi]');
+  if (tr) select(Number(tr.dataset.mmsi));
+});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') tick(); });
+selected = Number(location.hash.slice(1)) || null;
+if (selected) loadPath();
+tick();
+setInterval(tick, 3000);
+setInterval(loadPath, 15000);
+setInterval(loadPhoto, 4000);
+</script>
+</body>
+</html>
